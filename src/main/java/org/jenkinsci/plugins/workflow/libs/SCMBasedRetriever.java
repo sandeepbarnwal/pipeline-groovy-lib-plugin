@@ -236,7 +236,7 @@ public abstract class SCMBasedRetriever extends LibraryRetriever {
                 retrySCMOperation(listener, () -> {
                     delegate.checkout(run, lease.path, listener, node.createLauncher(listener));
                     return null;
-                });
+                }, lease.path);
                 // Fail fast: reject symlinks early rather than after copying to libDir
                 rejectSpecialFiles(lease.path, libraryPath);
                 if (libraryPath == null) {
@@ -350,6 +350,10 @@ public abstract class SCMBasedRetriever extends LibraryRetriever {
     }
 
     protected static <T> T retrySCMOperation(TaskListener listener, Callable<T> task) throws Exception{
+        return retrySCMOperation(listener, task, null);
+    }
+
+    protected static <T> T retrySCMOperation(TaskListener listener, Callable<T> task, @CheckForNull FilePath cacheDir) throws Exception{
         T ret = null;
         for (int retryCount = Jenkins.get().getScmCheckoutRetryCount(); retryCount >= 0; retryCount--) {
             try {
@@ -374,10 +378,37 @@ public abstract class SCMBasedRetriever extends LibraryRetriever {
             if (retryCount == 0)   // all attempts failed
                 throw new AbortException("Maximum checkout retry attempts reached, aborting");
 
+            if (cacheDir != null && isCacheCorrupted(cacheDir)) {
+                try {
+                    listener.getLogger().println("Deleting corrupted cache " + cacheDir + " before retry");
+                    cacheDir.deleteRecursive();
+                } catch (Exception e) {
+                    Functions.printStackTrace(e, listener.error("Failed to delete cache directory before retry"));
+                }
+            }
+
             listener.getLogger().println("Retrying after 10 seconds");
             Thread.sleep(10000);
         }
         return ret;
+    }
+
+    static boolean isCacheCorrupted(FilePath cacheDir) {
+        try {
+            if (!cacheDir.exists()) return false;
+            FilePath dotGit = cacheDir.child(".git");
+            if (!dotGit.isDirectory()) return true;
+            FilePath head = dotGit.child("HEAD");
+            if (!head.exists() || head.length() == 0) return true;
+            if (dotGit.child("index.lock").exists()) return true;
+            FilePath index = dotGit.child("index");
+            // A valid git index starts with the DIRC magic number; minimum size is 12 bytes
+            if (index.exists() && index.length() < 12) return true;
+            return false;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Could not check git repo validity of " + cacheDir, e);
+            return false;
+        }
     }
 
     // TODO there is WorkspaceList.tempDir but no API to make other variants

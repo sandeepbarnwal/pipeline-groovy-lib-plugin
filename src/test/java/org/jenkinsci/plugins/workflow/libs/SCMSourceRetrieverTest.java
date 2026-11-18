@@ -857,4 +857,31 @@ class SCMSourceRetrieverTest {
         }
     }
 
+    @Test
+    void corruptedLibsCacheIsAutoRecovered() throws Exception {
+        sampleRepo.init();
+        sampleRepo.write("vars/myecho.groovy", "def call() {echo 'hello from lib'}");
+        sampleRepo.git("add", "vars");
+        sampleRepo.git("commit", "--message=init");
+        GlobalLibraries.get().setLibraries(Collections.singletonList(
+            new LibraryConfiguration("mylib",
+                new SCMSourceRetriever(new GitSCMSource(null, sampleRepo.toString(), "", "*", "", true)))));
+        WorkflowJob p = r.jenkins.createProject(WorkflowJob.class, "p");
+        p.setDefinition(new CpsFlowDefinition("@Library('mylib@master') import myecho; myecho()", true));
+        r.jenkins.setScmCheckoutRetryCount(1);
+
+        // First build seeds the cache
+        r.buildAndAssertSuccess(p);
+
+        // Corrupt the .git/index to simulate a corrupted cache
+        String checkoutDir = LibraryRecord.directoryNameFor("git " + sampleRepo.toString());
+        FilePath cacheDir = r.jenkins.getWorkspaceFor(p).withSuffix("@libs").child(checkoutDir);
+        assertTrue(cacheDir.exists(), "cache dir should exist after first build");
+        cacheDir.child(".git/index").write("CORRUPTED", "UTF-8");
+
+        // Second build should recover automatically instead of failing permanently
+        WorkflowRun b = r.buildAndAssertSuccess(p);
+        r.assertLogContains("hello from lib", b);
+    }
+
 }
