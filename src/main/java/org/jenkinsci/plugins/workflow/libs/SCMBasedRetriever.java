@@ -378,9 +378,9 @@ public abstract class SCMBasedRetriever extends LibraryRetriever {
             if (retryCount == 0)   // all attempts failed
                 throw new AbortException("Maximum checkout retry attempts reached, aborting");
 
-            if (cacheDir != null && isCacheCorrupted(cacheDir)) {
+            if (cacheDir != null && retryCount == 1) {
                 try {
-                    listener.getLogger().println("Deleting corrupted cache " + cacheDir + " before retry");
+                    listener.getLogger().println("Deleting cache " + cacheDir + " before final retry");
                     cacheDir.deleteRecursive();
                 } catch (Exception e) {
                     Functions.printStackTrace(e, listener.error("Failed to delete cache directory before retry"));
@@ -391,24 +391,6 @@ public abstract class SCMBasedRetriever extends LibraryRetriever {
             Thread.sleep(10000);
         }
         return ret;
-    }
-
-    static boolean isCacheCorrupted(FilePath cacheDir) {
-        try {
-            if (!cacheDir.exists()) return false;
-            FilePath dotGit = cacheDir.child(".git");
-            if (!dotGit.isDirectory()) return true;
-            FilePath head = dotGit.child("HEAD");
-            if (!head.exists() || head.length() == 0) return true;
-            if (dotGit.child("index.lock").exists()) return true;
-            FilePath index = dotGit.child("index");
-            // A valid git index starts with the DIRC magic number; minimum size is 12 bytes
-            if (index.exists() && index.length() < 12) return true;
-            return false;
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Could not check git repo validity of " + cacheDir, e);
-            return false;
-        }
     }
 
     // TODO there is WorkspaceList.tempDir but no API to make other variants
